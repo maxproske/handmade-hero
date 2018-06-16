@@ -35,9 +35,9 @@ int CALLBACK WinMain(
 	// Arbitrary choice of the x86 designer
 	//
 	// Big endian mode (if high order byte comes first)
-	//   powerpc, xbox 360, photoshop
+	//   powerpc, xbox 360, photoshop, ps3. economics trumped intel (x86)
 	// Little endian mode (if low order byte comes first) 
-	//   x86, arm (android/ios), x64
+	//   x86, arm (android/ios can choose endianess), x64
 	//
 	// File formats may need to be switched around to be operable on the CPU
 
@@ -90,4 +90,69 @@ int CALLBACK WinMain(
 	projectile *Test;
 	Test->Damage
 	*/
+
+	// Code is encoded in .exe, get paged into memory (pages) as they need to be executed
+	// Fixup tables replace syscalls (OutputdebugString) to pointers in Windows code
+	// Between intel encoded memory and CPU is iCache. It preps the code for you to store CODE
+	// Stack allocates pages and free thems as needed. It can never free out of the middle, because functions nest.
+	// Heap can be freed out of the middle.
+
+	// Bitwise operators
+	int X = 5;
+	int Y = 0;
+	X = 0xA; // 0x0000000a
+	X = X << 4; // 0x000000a0 (shift a 1 place to the left)
+	X = X << 4;
+	X = X << 4;
+
+	// What does this actually do?
+	// ---------------------------
+	//     8421
+	// 00000001
+
+	// << 1 00000010 // multiply/divide by 2
+	// << 2 00000100 // multiply/divide by 4
+	// << 3 00001000 // multiply/divide by 8
+	// << 4 00010000 // multiply/divide by 16 (0x0a -> 0xa0)
+
+	// Fill it with bits
+	X = 0;
+	X = X | (1 << 4);
+	X = X | (1 << 3);
+	X = X | (1 << 30);
+	X = X | (1 << 1); // 0x4000001a
+
+	// Create a mask
+	Y = ((1 << 4) | (1 << 31)); // 0x80000010
+
+	// Show bits in common (4th bit)
+	X = X & Y; // 0x00000010
+
+	// Not
+	X = 0;
+	X = ~X; // 0xffffffff
+
+	// Xor
+	X = (1 << 4) | (1 << 8);
+	Y = (1 << 8) | (1 << 16);
+	X = X ^ Y; // excludes and, so (1 << 8) gets cleared out
+	X = X ^ Y; // get the original back!
+
+	// Note(max): With < > == !=, the compiler is not onligated to give a 1 for true!
+	// || is a logical Or used in predication (if/else)
+	// Logical XOR ^^ is the same as !=
+
+	X = 0;
+	Y = 0;
+	for (X = 0xa; X != 0; X = X << 4) {
+		OutputDebugStringA("We are in the loop\n");
+	}
+
+	// Switch for comparing to a bunch of constants
+	// Cases don't start executing after the jump!
+	Y = 0;
+	if (Y == 0) {
+		int Y = 4; // Shadow the Y (different place in memory)
+	}
+
 }
