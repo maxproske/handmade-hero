@@ -20,8 +20,8 @@
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>15.0</VCProjectVersion>
-    <ProjectGuid>{0BC205B8-C3E6-4BB7-9AC8-20AAFC30C551}</ProjectGuid>
-    <RootNamespace>My002variablesanddisassembly</RootNamespace>
+    <ProjectGuid>{CC56AE8E-D1AF-4736-9B26-3F2E14F23B7D}</ProjectGuid>
+    <RootNamespace>My000introtoc</RootNamespace>
     <WindowsTargetPlatformVersion>10.0.17134.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
