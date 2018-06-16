@@ -155,4 +155,36 @@ int CALLBACK WinMain(
 		int Y = 4; // Shadow the Y (different place in memory)
 	}
 
+	// VirtualLock can help you prevent pages from being swapped to disk
+	// sdl = C++ standard library
+	// fopen = C standard library
+
+	// C++ Classes are glorified structs. RAII = Resource acquisition is initialization
+	// It's bad, because trying to catch errors on everything makes a program brittle
+	// If file A fails to open, maybe we want to do something different and smarter when file B fails (wait a few seconds)
+	// Get the code to WORK, don't worry about trying to close the file handle. Wrong problem definition.
+
+	// Opinion: Full mixin > Polymorphism/interitence is useless
+	// We will use C++ function overloading
+
+	Y = 0;
+	int Z = 0;
+	// Short circuit, compiler will not reach z==5
+	int Z = (Y == 5) || (Z == 5);
+
+	// Stack overflow = run out of guard pages on stack to grow the pages
+	// Strength reduction (2 * 2 -> 2 << 1)
+	
+	// Class vs struct?
+	// No differnce in C++, except struct is public: and class has private:
+
+	struct foo {
+		char bar;
+	private:
+	};
+
+	class foo {
+	public:
+		char bar;
+	};
 }
