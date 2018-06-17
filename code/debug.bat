@@ -1,4 +1,5 @@
 @echo off
 
-:: Open executable (built with -Zi debug info) in Visual Studio
+:: Build (with -Zi debug info) and open in Visual Studio
+call build.bat
 devenv ..\build\win32_handmade.exe
