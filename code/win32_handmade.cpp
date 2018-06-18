@@ -1,57 +1,104 @@
 #include <windows.h>
+#include <stdint.h>
 
-#define internal static // Don't allow to be used outside this source file
-#define local_persist static 
+#define local_persist static
 #define global_variable static 
+#define internal static // Don't use outside this source file
 
-// TODO(max): This is a global for now
+// TODO(max): Move to a platform-independent header
+typedef uint8_t uint8;
+typedef uint16_t uint16;
+typedef uint32_t uint32;
+typedef uint64_t uint64;
+
+// Global variables for debug only
 global_variable bool Running;
 global_variable BITMAPINFO BitmapInfo;
 global_variable void *BitmapMemory;
-global_variable HBITMAP BitmapHandle;
-global_variable HDC BitmapDeviceContext;
+global_variable int BitmapWidth;
+global_variable int BitmapHeight;
 
-// Create buffer. Pass device-independent bitmaps to Windows to draw using GDI
+// Allocate back buffer
 internal void Win32ResizeDIBSection(int Width, int Height)
 {
-    // Free old DIBSection if initialized
-    if (BitmapHandle) 
+    // Free first
+    if (BitmapMemory)
     {
-        DeleteObject(BitmapHandle);
+        VirtualFree(BitmapMemory, 0, MEM_RELEASE); // 0 remembers how it was allocated
     }
 
-    // Get device context compatible with screen context (even though we're not using it)
-    if (!BitmapDeviceContext)
-    {
-        BitmapDeviceContext = CreateCompatibleDC(0);
-    }
+    BitmapWidth = Width;
+    BitmapHeight = Height;
 
-    // Fill out bmiHeader
-    BitmapInfo.bmiHeader.biSize = sizeof(BitmapInfo.bmiHeader) ; // Size of struct in bytes
-    BitmapInfo.bmiHeader.biWidth = Width;
-    BitmapInfo.bmiHeader.biHeight = Height;
+    // Fill out bitmap info header
+    BitmapInfo.bmiHeader.biSize = sizeof(BitmapInfo.bmiHeader);
+    BitmapInfo.bmiHeader.biWidth = BitmapWidth;
+    BitmapInfo.bmiHeader.biHeight = -BitmapHeight; // Start at top left. TODO(max): performance penalty?
     BitmapInfo.bmiHeader.biPlanes = 1;
-    BitmapInfo.bmiHeader.biBitCount = 32; // 8 bytes/32 bits
+    BitmapInfo.bmiHeader.biBitCount = 32; // RGB + 8 bit offset, so we fall onto 32-bit boundaries
     BitmapInfo.bmiHeader.biCompression = BI_RGB; // No compression
 
-    // Allocate our new DIBSection
-    BitmapHandle = CreateDIBSection(
-            BitmapDeviceContext, &BitmapInfo,
-            DIB_RGB_COLORS,
-            &BitmapMemory, // Pointer to the bits
-            0,0);
+    // Allocate memory ourselves using low-level, Windows API
+    int BytesPerPixel = 4;
+    int BitmapMemorySize = (BitmapWidth*BitmapHeight)*BytesPerPixel;
+
+    // VirtualAlloc vs. HeapAlloc vs. malloc vs. new
+    // https://stackoverflow.com/questions/872072/whats-the-differences-between-virtualalloc-and-heapalloc
+    BitmapMemory = VirtualAlloc(0, BitmapMemorySize, MEM_COMMIT, PAGE_READWRITE);
+
+    int Pitch = Width*BytesPerPixel;
+    // Cast void pointer to unsigned char (we typedef uint8)
+    uint8 *Row = (uint8 *)BitmapMemory;
+    for(int Y = 0; Y < BitmapHeight; ++Y)
+    {
+        uint8 *Pixel = (uint8 *)Row;
+        for(int X = 0; X < BitmapWidth; ++X)
+        {
+            /*
+                Why does 255 0 0 draw blue?
+                ---------------------------
+                Pixel in memory you would think is 0xRRGGBBPP (where P is padding)
+                Except it uses a little endian architecture
+                Engineers wanted it to look correct in the registers, so they reversed it
+                0xBBGGRRPP
+            */
+
+            *Pixel = (uint8)X;
+            ++Pixel;
+
+            *Pixel = (uint8)Y;
+            ++Pixel;
+
+            *Pixel = 0;
+            ++Pixel;
+
+            *Pixel = 0;
+            ++Pixel;
+        }
+        Row += Pitch;
+    }
 }
 
-internal void Win32UpdateWindow(HDC DeviceContext, int X, int Y, int Width, int Height)
+internal void Win32UpdateWindow(HDC DeviceContext, RECT *WindowRect, int X, int Y, int Width, int Height)
 {
-    // Rectangle to rectangle copy (can be different sizes using scaling if we need to)
+    int WindowWidth = WindowRect->right - WindowRect->left;
+    int WindowHeight = WindowRect->bottom - WindowRect->top;
+
+    // Blit to whole window first
     StretchDIBits(DeviceContext,
+        /*
         X, Y, Width, Height,
         X, Y, Width, Height,
+        */
+        0,0, BitmapWidth, BitmapHeight,
+        0,0, WindowWidth, WindowHeight,
         BitmapMemory, // Get bits somewhere
         &BitmapInfo, // Get info bits somewhere
         DIB_RGB_COLORS, // Specify RGB or PALLETTE
         SRCCOPY); // What kind of bitwise ops we want to do. Directly copy bits.
+
+        
+    // Dirty rect to rect copy (only update repaint region)
 }
 
 // Handles Window notifications
@@ -98,8 +145,11 @@ LRESULT CALLBACK WindowProc(HWND Window,
             int Width = Paint.rcPaint.right - Paint.rcPaint.left;
             int Height = Paint.rcPaint.bottom - Paint.rcPaint.top;
 
+            RECT ClientRect;
+            GetClientRect(Window, &ClientRect); // Get size of rect we can draw to
+
             // Pass rect to update function
-            Win32UpdateWindow(DeviceContext, X, Y, Width, Height);
+            Win32UpdateWindow(DeviceContext, &ClientRect, X, Y, Width, Height);
 
             EndPaint(Window, &Paint);
         } break;
