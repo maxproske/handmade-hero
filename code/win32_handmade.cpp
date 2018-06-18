@@ -17,6 +17,41 @@ global_variable BITMAPINFO BitmapInfo;
 global_variable void *BitmapMemory;
 global_variable int BitmapWidth;
 global_variable int BitmapHeight;
+global_variable int BytesPerPixel = 4;
+
+internal void RenderWeirdGradient(int XOffset, int YOffset)
+{
+    int Width = BitmapWidth;
+    int Height = BitmapHeight;
+    int Pitch = Width*BytesPerPixel;
+    // Cast void pointer to unsigned char (we typedef uint8)
+    uint8 *Row = (uint8 *)BitmapMemory;
+    for(int Y = 0; Y < BitmapHeight; ++Y)
+    {
+        uint32 *Pixel = (uint32 *)Row;
+        for(int X = 0; X < BitmapWidth; ++X)
+        {
+            /*
+            Why does 255 0 0 0 draw blue?
+            ---------------------------
+            Pixel in memory you would think is 0xRRGGBBPP (where P is padding)
+            Except it uses a little endian architecture
+            Engineers wanted it to look correct in the registers, so they reversed it
+            0xBBGGRRPP
+            */
+
+            uint8 Blue = (X + XOffset);
+            uint8 Green = (Y + YOffset);
+
+            /*
+            Memory:     BB GG RR PP
+            Register:   PP RR GG BB
+            */
+            *Pixel++ = ((Green << 8) | Blue);
+        }
+        Row += Pitch;
+    }
+}
 
 // Allocate back buffer
 internal void Win32ResizeDIBSection(int Width, int Height)
@@ -39,50 +74,19 @@ internal void Win32ResizeDIBSection(int Width, int Height)
     BitmapInfo.bmiHeader.biCompression = BI_RGB; // No compression
 
     // Allocate memory ourselves using low-level, Windows API
-    int BytesPerPixel = 4;
     int BitmapMemorySize = (BitmapWidth*BitmapHeight)*BytesPerPixel;
 
     // VirtualAlloc vs. HeapAlloc vs. malloc vs. new
     // https://stackoverflow.com/questions/872072/whats-the-differences-between-virtualalloc-and-heapalloc
     BitmapMemory = VirtualAlloc(0, BitmapMemorySize, MEM_COMMIT, PAGE_READWRITE);
 
-    int Pitch = Width*BytesPerPixel;
-    // Cast void pointer to unsigned char (we typedef uint8)
-    uint8 *Row = (uint8 *)BitmapMemory;
-    for(int Y = 0; Y < BitmapHeight; ++Y)
-    {
-        uint8 *Pixel = (uint8 *)Row;
-        for(int X = 0; X < BitmapWidth; ++X)
-        {
-            /*
-                Why does 255 0 0 draw blue?
-                ---------------------------
-                Pixel in memory you would think is 0xRRGGBBPP (where P is padding)
-                Except it uses a little endian architecture
-                Engineers wanted it to look correct in the registers, so they reversed it
-                0xBBGGRRPP
-            */
-
-            *Pixel = (uint8)X;
-            ++Pixel;
-
-            *Pixel = (uint8)Y;
-            ++Pixel;
-
-            *Pixel = 0;
-            ++Pixel;
-
-            *Pixel = 0;
-            ++Pixel;
-        }
-        Row += Pitch;
-    }
+    // TODO(max): Clear this to black.
 }
 
-internal void Win32UpdateWindow(HDC DeviceContext, RECT *WindowRect, int X, int Y, int Width, int Height)
+internal void Win32UpdateWindow(HDC DeviceContext, RECT *ClientRect, int X, int Y, int Width, int Height)
 {
-    int WindowWidth = WindowRect->right - WindowRect->left;
-    int WindowHeight = WindowRect->bottom - WindowRect->top;
+    int WindowWidth = ClientRect->right - ClientRect->left;
+    int WindowHeight = ClientRect->bottom - ClientRect->top;
 
     // Blit to whole window first
     StretchDIBits(DeviceContext,
@@ -170,18 +174,6 @@ int CALLBACK WinMain(HINSTANCE Instance,
                     int ShowCode)
 {
     WNDCLASS WindowClass = {}; // Clear window initialization to 0
-    /*  Signature:
-        UINT      style; [*]
-        WNDPROC   lpfnWndProc; [*]
-        int       cbClsExtra;
-        int       cbWndExtra;
-        HINSTANCE hInstance; [*]
-        HICON     hIcon;
-        HCURSOR   hCursor;
-        HBRUSH    hbrBackground;
-        LPCTSTR   lpszMenuName;
-        LPCTSTR   lpszClassName; [*]
-    */
    
     // TODO(max): Check if HREDRAW/VREDRAW/OWNDC still matter
     WindowClass.lpfnWndProc = WindowProc; // Pointer to a function that we define how our window responds to events
@@ -192,7 +184,7 @@ int CALLBACK WinMain(HINSTANCE Instance,
     if (RegisterClass(&WindowClass))
     {
         // CreateWindowEx is a newer version of CreateWindow, with extras
-        HWND WindowHandle = 
+        HWND Window = 
 			CreateWindowExA(
 				0,
 				WindowClass.lpszClassName,
@@ -202,52 +194,48 @@ int CALLBACK WinMain(HINSTANCE Instance,
 				CW_USEDEFAULT,
 				CW_USEDEFAULT,
 				CW_USEDEFAULT,
-				0,
-				0,
+				0,0,
 				Instance,
 				0);
-        /*  Signature:
-            DWORD     dwExStyle,
-            LPCTSTR   lpClassName,
-            LPCTSTR   lpWindowName,
-            DWORD     dwStyle,
-            int       x,
-            int       y,
-            int       nWidth,
-            int       nHeight,
-            HWND      hWndParent,
-            HMENU     hMenu,
-            HINSTANCE hInstance,
-            LPVOID    lpParam
-        */
 
-        if (WindowHandle)
+        if (Window)
         {
-            Running = true;
+            int XOffset = 0;
+            int YOffset = 0;
+
             // Pull messages off our queue
-            // Grab all messages coming in
             // while(1) will complain if debug level is -Wall (warning all)
+            Running = true;
             while(Running)
             {
+                // GetMessageA is blocking, so use PeekMessage
                 MSG Message;
-                // BOOL is an int because it can receieve -1 if hInstance is invalid
-                BOOL MessageResult = GetMessageA(&Message, 0, 0, 0); 
-                /*  Signature:
-                    LPMSG lpMsg,
-                    HWND  hWnd,
-                    UINT  wMsgFilterMin,
-                    UINT  wMsgFilterMax
-                */
-                if (MessageResult > 0)
+                while(PeekMessage(&Message, 0, 0, 0, PM_REMOVE))
                 {
+                    // Quit anytime we get a quit message
+                    if (Message.message == WM_QUIT)
+                    {
+                        Running = false;
+                    }
+
+                    // Flush out our queue
                     TranslateMessage(&Message); // Turn messages into proper keyboard messages
                     DispatchMessageA(&Message); // Dispatch message to Windows to have them
                 }
-                else
-                {
-					// PostQuitMessage(0)
-                    break;
-                }
+
+                RenderWeirdGradient(XOffset, YOffset);
+
+                // Blit to screen
+                HDC DeviceContext = GetDC(Window);
+                RECT ClientRect;
+                GetClientRect(Window, &ClientRect);
+                int WindowWidth = ClientRect.right - ClientRect.left;
+                int WindowHeight = ClientRect.bottom - ClientRect.top;
+                Win32UpdateWindow(DeviceContext, &ClientRect, 0, 0, WindowWidth, WindowHeight);
+                ReleaseDC(Window, DeviceContext);
+
+                // Increment offset
+                ++XOffset;
             }
         }
         else
