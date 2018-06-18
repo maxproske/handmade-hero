@@ -1,1 +1,0 @@
-data/ is the working directory for Visual Studio, so we are always running in the configuration we will ship to end users.
