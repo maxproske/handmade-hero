@@ -62,12 +62,10 @@ global_variable x_input_set_state *XInputSetState_ = XInputSetStateStub;
 
 // Take loading Windows DLL into our own hands
 internal void Win32LoadXInput(void) {
-	// Load Windows .dll
-	HMODULE XInputLibrary = LoadLibrary("xinput1_3.dll");
-	// Get XInput if it is valid
+	HMODULE XInputLibrary = LoadLibraryA("xinput1_3.dll"); // Looks in a number of places (exe folder first, then Windows)
 	if (XInputLibrary)
 	{
-		// Get address of a procedure in .dll
+		// Get address of procedures from .dll
 		XInputGetState = (x_input_get_state *)GetProcAddress(XInputLibrary, "XInputGetState");
 		XInputSetState = (x_input_set_state *)GetProcAddress(XInputLibrary, "XInputSetState");
 	}
@@ -85,14 +83,14 @@ win32_window_dimension Win32GetWindowDimension(HWND Window)
 	return(Result);
 }
 
-internal void RenderWeirdGradient(win32_offscreen_buffer Buffer, int BlueOffset, int GreenOffset)
+internal void RenderWeirdGradient(win32_offscreen_buffer *Buffer, int BlueOffset, int GreenOffset)
 {
 	// Cast void pointer to unsigned char (typedef uint8)
-	uint8 *Row = (uint8 *)Buffer.Memory;
-	for (int Y = 0; Y < Buffer.Height; ++Y)
+	uint8 *Row = (uint8 *)Buffer->Memory;
+	for (int Y = 0; Y < Buffer->Height; ++Y)
 	{
 		uint32 *Pixel = (uint32 *)Row;
-		for (int X = 0; X < Buffer.Width; ++X)
+		for (int X = 0; X < Buffer->Width; ++X)
 		{
 			// Little endian (255,0,0,0 will draw blue)
 			uint8 Blue = (X + BlueOffset);
@@ -100,7 +98,7 @@ internal void RenderWeirdGradient(win32_offscreen_buffer Buffer, int BlueOffset,
 
 			*Pixel++ = ((Green << 8) | Blue);
 		}
-		Row += Buffer.Pitch;
+		Row += Buffer->Pitch;
 	}
 }
 
@@ -133,16 +131,16 @@ internal void Win32ResizeDIBSection(win32_offscreen_buffer *Buffer, int Width, i
 
 // Blit to whole window
 internal void Win32DisplayBufferInWindow(
+	win32_offscreen_buffer *Buffer,
 	HDC DeviceContext,
 	int WindowWidth, int WindowHeight,
-	win32_offscreen_buffer Buffer,
 	int X, int Y, int Width, int Height)
 {
 	// TODO(max): Correct aspect ratio on resize
 	StretchDIBits(DeviceContext,
 		0, 0, WindowWidth, WindowHeight, // dst
-		0, 0, Buffer.Width, Buffer.Height, // src
-		Buffer.Memory, &Buffer.Info,
+		0, 0, Buffer->Width, Buffer->Height, // src
+		Buffer->Memory, &Buffer->Info,
 		DIB_RGB_COLORS, // RGB, not using a palette town
 		SRCCOPY); // Direct copy bits, no bitwise ops necessary
 }
@@ -178,8 +176,10 @@ LRESULT CALLBACK Win32MainWindowCallback(HWND Window, UINT Message, WPARAM WPara
 	{
 		uint32 VKCode = WParam; // Virtual-key code for non-ANSI keys 
 		// LParam gives you even additional info (LParam & (1 << 30); for up before the message was sent or after)
-		bool WasDown = ((LParam & (1 << 30)) != 0);
-		bool IsDown = ((LParam & (1 << 31)) == 0);
+		#define KeyMessageWasDownBit (1 << 30)
+		#define KeyMessageIsDownBit (1 << 31)
+		bool WasDown = ((LParam & KeyMessageWasDownBit) != 0);
+		bool IsDown = ((LParam & KeyMessageIsDownBit) == 0);
 
 		if (WasDown != IsDown)
 		{
@@ -250,7 +250,7 @@ LRESULT CALLBACK Win32MainWindowCallback(HWND Window, UINT Message, WPARAM WPara
 
 		// Draw to rect
 		win32_window_dimension Dimension = Win32GetWindowDimension(Window);
-		Win32DisplayBufferInWindow(DeviceContext, Dimension.Width, Dimension.Height, GlobalBackbuffer, X, Y, Width, Height);
+		Win32DisplayBufferInWindow(&GlobalBackbuffer, DeviceContext, Dimension.Width, Dimension.Height, X, Y, Width, Height);
 
 		EndPaint(Window, &Paint); // For WM_PAINT
 	} break;
@@ -347,11 +347,11 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLi
 				Vibration.wLeftMotorSpeed = 60000;
 				XInputSetState(0, &Vibration);
 
-				RenderWeirdGradient(GlobalBackbuffer, XOffset, YOffset);
+				RenderWeirdGradient(&GlobalBackbuffer, XOffset, YOffset);
 
 				// Blit to screen
 				win32_window_dimension Dimension = Win32GetWindowDimension(Window);
-				Win32DisplayBufferInWindow(DeviceContext, Dimension.Width, Dimension.Height, GlobalBackbuffer, 0, 0, Dimension.Width, Dimension.Height);
+				Win32DisplayBufferInWindow(&GlobalBackbuffer, DeviceContext, Dimension.Width, Dimension.Height,0, 0, Dimension.Width, Dimension.Height);
 				//ReleaseDC(Window, DeviceContext);
 
 				// Increment offset
