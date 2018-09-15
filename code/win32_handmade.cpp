@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <stdint.h>
 #include <xinput.h>
+#include <dsound.h>
 
 #define local_persist static // Can't be used outside this translation unit (source file)
 #define global_variable static 
@@ -10,6 +11,8 @@ typedef int8_t int8;
 typedef int16_t int16;
 typedef int32_t int32;
 typedef int64_t int64;
+typedef int32 bool32;
+
 typedef uint8_t uint8;
 typedef uint16_t uint16;
 typedef uint32_t uint32;
@@ -45,7 +48,7 @@ typedef X_INPUT_GET_STATE(x_input_get_state);
 // And creating a stub. (If the function doesn't exist, just return 0. No harm done)
 X_INPUT_GET_STATE(XInputGetStateStub)
 {
-	return(0);
+	return(ERROR_DEVICE_NOT_CONNECTED);
 }
 // So our function pointer will never be 0x000000
 global_variable x_input_get_state *XInputGetState_ = XInputGetStateStub;
@@ -55,14 +58,22 @@ global_variable x_input_get_state *XInputGetState_ = XInputGetStateStub;
 typedef X_INPUT_SET_STATE(x_input_set_state);
 X_INPUT_SET_STATE(XInputSetStateStub)
 {
-	return(0);
+	return(ERROR_DEVICE_NOT_CONNECTED);
 }
 global_variable x_input_set_state *XInputSetState_ = XInputSetStateStub;
 #define XInputSetState XInputSetState_
 
+#define DIRECT_SOUND_CREATE(name) HRESULT WINAPI name(LPCGUID pcGuidDevice, LPDIRECTSOUND *ppDS, LPUNKNOWN pUnkOuter)
+typedef DIRECT_SOUND_CREATE(direct_sound_create);
+
+
 // Take loading Windows DLL into our own hands
 internal void Win32LoadXInput(void) {
-	HMODULE XInputLibrary = LoadLibraryA("xinput1_3.dll"); // Looks in a number of places (exe folder first, then Windows)
+	// TODO(max): Test this on Windows 8 which only has 1.4
+	HMODULE XInputLibrary = LoadLibraryA("xinput1_4.dll");
+	if (!XInputLibrary) {
+		HMODULE XInputLibrary = LoadLibraryA("xinput1_3.dll"); // Looks in a number of places (exe folder first, then Windows)
+	}
 	if (XInputLibrary)
 	{
 		// Get address of procedures from .dll
@@ -81,6 +92,97 @@ win32_window_dimension Win32GetWindowDimension(HWND Window)
 	Result.Height = ClientRect.bottom - ClientRect.top;
 
 	return(Result);
+}
+
+internal void Win32InitDSound(HWND Window, int32 SamplesPerSecond, int32 BufferSize)
+{
+	// Load the library
+	HMODULE DSoundLibrary = LoadLibraryA("dsound.dll");
+
+	if (DSoundLibrary)
+	{
+		direct_sound_create *DirectSoundCreate = (direct_sound_create *)GetProcAddress(DSoundLibrary, "DirectSoundCreate");
+		
+		LPDIRECTSOUND DirectSound;
+		if (DirectSoundCreate && SUCCEEDED(DirectSoundCreate(0, &DirectSound, 0)))
+		{
+			// Set format
+			WAVEFORMATEX WaveFormat = {};
+			WaveFormat.wFormatTag = WAVE_FORMAT_PCM;
+			WaveFormat.nChannels = 2; // Stereo
+			WaveFormat.nSamplesPerSec = SamplesPerSecond;
+			WaveFormat.nBlockAlign = (WaveFormat.nChannels * WaveFormat.wBitsPerSample) / 8;
+			WaveFormat.nAvgBytesPerSec = WaveFormat.nSamplesPerSec * WaveFormat.nBlockAlign;
+			WaveFormat.wBitsPerSample = 16; // All audio is 16-bit
+			WaveFormat.cbSize = 0;
+
+			// Set cooperative level
+			HRESULT Error = DirectSound->SetCooperativeLevel(Window, DSSCL_PRIORITY);
+			if (SUCCEEDED(Error))
+			{
+				// Create Primary buffer
+				DSBUFFERDESC BufferDescription = {}; // Zero before using
+				BufferDescription.dwSize = sizeof(BufferDescription);
+				BufferDescription.dwFlags = DSBCAPS_PRIMARYBUFFER;
+
+				LPDIRECTSOUNDBUFFER PrimaryBuffer;
+				if (SUCCEEDED(DirectSound->CreateSoundBuffer(&BufferDescription, &PrimaryBuffer, 0)))
+				{
+					if (SUCCEEDED(PrimaryBuffer->SetFormat(&WaveFormat)))
+					{
+						// We have finally set the format of the primary format
+						OutputDebugStringA("Primary format was set.\n");
+					}
+					else 
+					{
+						// Diagnostic
+					}
+				}
+				else 
+				{
+					// Diagnostic
+				}
+			}
+			else
+			{
+				// Diagnostic
+			}
+
+			// Create Secondary buffer
+			DSBUFFERDESC BufferDescription = {}; // Zero before using
+			BufferDescription.dwSize = sizeof(BufferDescription);
+			BufferDescription.dwFlags = 0;
+			BufferDescription.dwBufferBytes = BufferSize;
+			BufferDescription.lpwfxFormat = &WaveFormat;
+			LPDIRECTSOUNDBUFFER SecondaryBuffer;
+
+			Error = DirectSound->CreateSoundBuffer(&BufferDescription, &SecondaryBuffer, 0);
+			if (SUCCEEDED(Error))
+			{
+				// Start playing
+				OutputDebugStringA("Secondary buffer created successfully.\n");
+			}
+		}
+		else
+		{
+			// Diagnostic
+		}
+	}
+	else
+	{
+		// Diagnostic
+	}
+
+	// Get a DirectSound object
+
+
+	// Create a primary buffer
+
+
+	// Create a secondary buffer (what we will write to)
+
+
+	// Start playing
 }
 
 internal void RenderWeirdGradient(win32_offscreen_buffer *Buffer, int BlueOffset, int GreenOffset)
@@ -139,10 +241,10 @@ internal void Win32DisplayBufferInWindow(
 	// TODO(max): Correct aspect ratio on resize
 	StretchDIBits(DeviceContext,
 		0, 0, WindowWidth, WindowHeight, // dst
-		0, 0, Buffer->Width, Buffer->Height, // src
-		Buffer->Memory, &Buffer->Info,
-		DIB_RGB_COLORS, // RGB, not using a palette town
-		SRCCOPY); // Direct copy bits, no bitwise ops necessary
+0, 0, Buffer->Width, Buffer->Height, // src
+Buffer->Memory, &Buffer->Info,
+DIB_RGB_COLORS, // RGB, not using a palette town
+SRCCOPY); // Direct copy bits, no bitwise ops necessary
 }
 
 // Handle Windows events
@@ -169,6 +271,7 @@ LRESULT CALLBACK Win32MainWindowCallback(HWND Window, UINT Message, WPARAM WPara
 	case WM_SETCURSOR:
 	{
 	} break;
+	// Handle SYS keys ourselves instead of DefWindowProc
 	case WM_SYSKEYDOWN:
 	case WM_SYSKEYUP:
 	case WM_KEYDOWN:
@@ -237,6 +340,11 @@ LRESULT CALLBACK Win32MainWindowCallback(HWND Window, UINT Message, WPARAM WPara
 				OutputDebugStringA("VK_SPACE\n");
 			}
 		}
+
+		bool32 AltKeyWasDown = ((LParam & (1 << 29)) != 0);
+		if ((VKCode == VK_F4) && AltKeyWasDown) {
+			GlobalRunning = false;
+		}
 	} break;
 	case WM_PAINT:
 	{
@@ -247,6 +355,8 @@ LRESULT CALLBACK Win32MainWindowCallback(HWND Window, UINT Message, WPARAM WPara
 		int Y = Paint.rcPaint.top;
 		int Width = Paint.rcPaint.right - Paint.rcPaint.left;
 		int Height = Paint.rcPaint.bottom - Paint.rcPaint.top;
+
+		Win32InitDSound(Window, 48000, 48000*sizeof(int16)*2); // L+R channels (LRLRLR...)
 
 		// Draw to rect
 		win32_window_dimension Dimension = Win32GetWindowDimension(Window);
@@ -332,21 +442,14 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLi
 						int16 StickX = Pad->sThumbLX;
 						int16 StickY = Pad->sThumbLY;
 
-						if (AButton)
-						{
-							YOffset += 2;
-						}
+						XOffset += StickX >> 12;
+						YOffset += StickY >> 12;
 					}
 					else
 					{
 						// The controller is not available
 					}
 				}
-
-				XINPUT_VIBRATION Vibration;
-				Vibration.wLeftMotorSpeed = 60000;
-				XInputSetState(0, &Vibration);
-
 				RenderWeirdGradient(&GlobalBackbuffer, XOffset, YOffset);
 
 				// Blit to screen
