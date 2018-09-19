@@ -29,6 +29,7 @@ struct win32_offscreen_buffer
 
 global_variable bool GlobalRunning;
 global_variable win32_offscreen_buffer GlobalBackbuffer;
+global_variable LPDIRECTSOUNDBUFFER GlobalSecondaryBuffer;
 
 struct win32_window_dimension
 {
@@ -111,23 +112,22 @@ internal void Win32InitDSound(HWND Window, int32 SamplesPerSecond, int32 BufferS
 			WaveFormat.wFormatTag = WAVE_FORMAT_PCM;
 			WaveFormat.nChannels = 2; // Stereo
 			WaveFormat.nSamplesPerSec = SamplesPerSecond;
-			WaveFormat.nBlockAlign = (WaveFormat.nChannels * WaveFormat.wBitsPerSample) / 8;
-			WaveFormat.nAvgBytesPerSec = WaveFormat.nSamplesPerSec * WaveFormat.nBlockAlign;
 			WaveFormat.wBitsPerSample = 16; // All audio is 16-bit
+			WaveFormat.nBlockAlign = (WaveFormat.nChannels * WaveFormat.wBitsPerSample) / 8; // redundant
+			WaveFormat.nAvgBytesPerSec = WaveFormat.nSamplesPerSec * WaveFormat.nBlockAlign; // redundant, ffs windows
 			WaveFormat.cbSize = 0;
-
 			// Set cooperative level
 			HRESULT Error = DirectSound->SetCooperativeLevel(Window, DSSCL_PRIORITY);
 			if (SUCCEEDED(Error))
 			{
-				// Create Primary buffer
+				// Create Primary buffer (NOT a buffer, just a handle to the sound card)
 				DSBUFFERDESC BufferDescription = {}; // Zero before using
 				BufferDescription.dwSize = sizeof(BufferDescription);
-				BufferDescription.dwFlags = DSBCAPS_PRIMARYBUFFER;
-
+				BufferDescription.dwFlags = DSBCAPS_PRIMARYBUFFER; // Handle
 				LPDIRECTSOUNDBUFFER PrimaryBuffer;
 				if (SUCCEEDED(DirectSound->CreateSoundBuffer(&BufferDescription, &PrimaryBuffer, 0)))
 				{
+					// We will never send this buffer data. Just set the waveformat (48K, 44.1K, etc.)
 					if (SUCCEEDED(PrimaryBuffer->SetFormat(&WaveFormat)))
 					{
 						// We have finally set the format of the primary format
@@ -148,15 +148,13 @@ internal void Win32InitDSound(HWND Window, int32 SamplesPerSecond, int32 BufferS
 				// Diagnostic
 			}
 
-			// Create Secondary buffer
-			DSBUFFERDESC BufferDescription = {}; // Zero before using
+			// Create Secondary buffer (NOT double bnuffering, this is the actual buffer sound is output to)
+			DSBUFFERDESC BufferDescription = {};
 			BufferDescription.dwSize = sizeof(BufferDescription);
 			BufferDescription.dwFlags = 0;
 			BufferDescription.dwBufferBytes = BufferSize;
 			BufferDescription.lpwfxFormat = &WaveFormat;
-			LPDIRECTSOUNDBUFFER SecondaryBuffer;
-
-			Error = DirectSound->CreateSoundBuffer(&BufferDescription, &SecondaryBuffer, 0);
+			Error = DirectSound->CreateSoundBuffer(&BufferDescription, &GlobalSecondaryBuffer, 0);
 			if (SUCCEEDED(Error))
 			{
 				// Start playing
@@ -227,7 +225,7 @@ internal void Win32ResizeDIBSection(win32_offscreen_buffer *Buffer, int Width, i
 
 	// Allocate memory ourselves using low-level, Windows API
 	int BitmapMemorySize = (Buffer->Width*Buffer->Height)*BytesPerPixel;
-	Buffer->Memory = VirtualAlloc(0, BitmapMemorySize, MEM_COMMIT, PAGE_READWRITE);
+	Buffer->Memory = VirtualAlloc(0, BitmapMemorySize, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
 	Buffer->Pitch = Buffer->Width*BytesPerPixel;
 }
 
@@ -401,8 +399,15 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLi
 		{
 			HDC DeviceContext = GetDC(Window);
 
+			int SamplesPerSecond = 48000;
 			int XOffset = 0;
 			int YOffset = 0;
+			int Hz = 256; // 261Hz is middle C
+			int SquareWaveCounter = 0; // Where we are in our square wave pattern
+			int SquareWavePeriod = SamplesPerSecond/Hz; // How many samples do we need to fill to get 256Hz
+			int BytesPerSample = sizeof(int16) * 2;
+
+			Win32InitDSound(Window, SamplesPerSecond, SamplesPerSecond * BytesPerSample);
 
 			// Pull messages off our queue
 			GlobalRunning = true;
@@ -451,6 +456,52 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLi
 					}
 				}
 				RenderWeirdGradient(&GlobalBackbuffer, XOffset, YOffset);
+
+				// DirectSound picks a point in the 2s buffer to write to
+				// Region 1 is the actual location of the write cursor offset, to where it should end in the next 2s buffer
+				// Region 2 is the start of the first 2s buffer, to where it should go.
+				// 22220000001|111100000
+
+				// Lock DirectSound buffer at the write cursor
+				// int16 int16  int16 int16 ...
+				// [LEFT RIGHT] LEFT  RIGHT ...
+				DWORD WritePointer = ; // 36:12
+				DWORD BytesToWrite = ;
+				VOID *Region1;
+				DWORD Region1Size; // Byte sizes
+				VOID *Region2;
+				DWORD Region2Size;
+				GlobalSecondaryBuffer->Lock(
+					WritePointer,
+					BytesToWrite,
+					&Region1, &Region1Size,
+					&Region2, &Region2Size,
+					0);
+
+				// Assert that both region sizes are valid (even)
+				int16 *SampleOut = (int16 *)Region1;
+				DWORD Region1SampleCount = Region1Size/BytesPerSample;
+				DWORD Region2SampleCount = Region2Size/BytesPerSample;
+				for (DWORD SampleIndex = 0; SampleIndex < Region1Size; ++SampleIndex)
+				{
+					if(SquareWaveCounter) {
+						SquareWaveCounter = SquareWavePeriod;
+					}
+					int16 SampleValue = (SquareWaveCounter > (SquareWavePeriod / 2)) ? 16000 : -16000;
+					*SampleOut++ = SampleValue;
+					*SampleOut++ = SampleValue;
+					--SquareWaveCounter; // Count down to 0 to repeat
+				}
+				for (DWORD SampleIndex = 0; SampleIndex < Region2Size; ++SampleIndex)
+				{
+					if (SquareWaveCounter) {
+						SquareWaveCounter = SquareWavePeriod;
+					}
+					int16 SampleValue = (SquareWaveCounter > (SquareWavePeriod / 2)) ? 16000 : -16000;
+					*SampleOut++ = SampleValue;
+					*SampleOut++ = SampleValue;
+					--SquareWaveCounter;
+				}
 
 				// Blit to screen
 				win32_window_dimension Dimension = Win32GetWindowDimension(Window);
