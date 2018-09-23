@@ -354,7 +354,8 @@ LRESULT CALLBACK Win32MainWindowCallback(HWND Window, UINT Message, WPARAM WPara
 		int Width = Paint.rcPaint.right - Paint.rcPaint.left;
 		int Height = Paint.rcPaint.bottom - Paint.rcPaint.top;
 
-		Win32InitDSound(Window, 48000, 48000*sizeof(int16)*2); // L+R channels (LRLRLR...)
+		// Note(max): Do we need to uncomment this?
+		//Win32InitDSound(Window, 48000, 48000*sizeof(int16)*2); // L+R channels (LRLRLR...)
 
 		// Draw to rect
 		win32_window_dimension Dimension = Win32GetWindowDimension(Window);
@@ -399,15 +400,22 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLi
 		{
 			HDC DeviceContext = GetDC(Window);
 
-			int SamplesPerSecond = 48000;
+			// Graphics test
 			int XOffset = 0;
 			int YOffset = 0;
-			int Hz = 256; // 261Hz is middle C
-			int SquareWaveCounter = 0; // Where we are in our square wave pattern
-			int SquareWavePeriod = SamplesPerSecond/Hz; // How many samples do we need to fill to get 256Hz
-			int BytesPerSample = sizeof(int16) * 2;
 
-			Win32InitDSound(Window, SamplesPerSecond, SamplesPerSecond * BytesPerSample);
+			// Sound test
+			int SamplesPerSecond = 48000;
+			int ToneHz = 256; // 261Hz is middle C
+			int16 ToneVolume = 2000;
+			uint32 RunningSampleIndex = 0; // Where we are in our square wave pattern
+			int SquareWavePeriod = SamplesPerSecond/ToneHz; // How many samples do we need to fill to get 256Hz
+			int HalfSquareWavePeriod = SquareWavePeriod / 2;
+			int BytesPerSample = sizeof(int16) * 2;
+			int SecondaryBufferSize = SamplesPerSecond * BytesPerSample;
+
+			Win32InitDSound(Window, SamplesPerSecond, SecondaryBufferSize);
+			bool32 SoundIsPlaying = false; // Don't start playing sound before we fill it, or there will be a delay as it loops around
 
 			// Pull messages off our queue
 			GlobalRunning = true;
@@ -465,47 +473,78 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLi
 				// Lock DirectSound buffer at the write cursor
 				// int16 int16  int16 int16 ...
 				// [LEFT RIGHT] LEFT  RIGHT ...
-				DWORD WritePointer = ; // 36:12
-				DWORD BytesToWrite = ;
-				VOID *Region1;
-				DWORD Region1Size; // Byte sizes
-				VOID *Region2;
-				DWORD Region2Size;
-				GlobalSecondaryBuffer->Lock(
-					WritePointer,
-					BytesToWrite,
-					&Region1, &Region1Size,
-					&Region2, &Region2Size,
-					0);
+				DWORD PlayCursor;
+				DWORD WriteCursor;
+				if (SUCCEEDED(GlobalSecondaryBuffer->GetCurrentPosition(&PlayCursor, &WriteCursor))) {
+					// Ignore the write cursor, because it may be garbage by the time we play it
+					// Calcualte the byte lock and byte write instead
+					DWORD ByteToLock = RunningSampleIndex * BytesPerSample % SecondaryBufferSize; // % if it loops, return to the beginning
+					DWORD BytesToWrite;
+					// Will be 0 when we start up
+					if (ByteToLock == PlayCursor)
+					{
+						BytesToWrite = SecondaryBufferSize;
+					}
+					// If byte to lock was after the play cursor
+					else if (ByteToLock > PlayCursor)
+					{
+						// Case for region 1 (wrapping)
+						BytesToWrite = SecondaryBufferSize - ByteToLock;
+						BytesToWrite += PlayCursor;
+					}
+					else
+					{
+						// Case for region 2 (no wrapping)
+						BytesToWrite = PlayCursor - ByteToLock;
+					}
+					
+					VOID *Region1;
+					DWORD Region1Size; // Byte sizes
+					VOID *Region2;
+					DWORD Region2Size;
 
-				// Assert that both region sizes are valid (even)
-				int16 *SampleOut = (int16 *)Region1;
-				DWORD Region1SampleCount = Region1Size/BytesPerSample;
-				DWORD Region2SampleCount = Region2Size/BytesPerSample;
-				for (DWORD SampleIndex = 0; SampleIndex < Region1Size; ++SampleIndex)
-				{
-					if(SquareWaveCounter) {
-						SquareWaveCounter = SquareWavePeriod;
+					// Did the sound card get yanked
+					if (SUCCEEDED(GlobalSecondaryBuffer->Lock(
+						ByteToLock,
+						BytesToWrite, // How far we would go to get to the play cursor
+						&Region1, &Region1Size,
+						&Region2, &Region2Size,
+						0))) {
+
+						// Assert that both region sizes are valid (even)
+
+						DWORD Region1SampleCount = Region1Size / BytesPerSample;
+						int16 *SampleOut = (int16 *)Region1;
+						for (DWORD SampleIndex = 0; SampleIndex < Region1SampleCount; ++SampleIndex)
+						{
+							// Running count of which # tooth or gap of the square wave we are in
+							// Even high, odd low
+							int16 SampleValue = ((RunningSampleIndex++ / HalfSquareWavePeriod) % 2) ? ToneVolume : -ToneVolume;
+							*SampleOut++ = SampleValue;
+							*SampleOut++ = SampleValue;
+						}
+						DWORD Region2SampleCount = Region2Size / BytesPerSample;
+						SampleOut = (int16 *)Region2;
+						for (DWORD SampleIndex = 0; SampleIndex < Region2SampleCount; ++SampleIndex)
+						{
+							int16 SampleValue = ((RunningSampleIndex++ / HalfSquareWavePeriod) % 2) ? ToneVolume : -ToneVolume;
+							*SampleOut++ = SampleValue;
+							*SampleOut++ = SampleValue;
+						}
+
+						// Unlock to prevent clicking when buffer loops
+						GlobalSecondaryBuffer->Unlock(Region1, Region1Size, Region2, Region2Size);
 					}
-					int16 SampleValue = (SquareWaveCounter > (SquareWavePeriod / 2)) ? 16000 : -16000;
-					*SampleOut++ = SampleValue;
-					*SampleOut++ = SampleValue;
-					--SquareWaveCounter; // Count down to 0 to repeat
 				}
-				for (DWORD SampleIndex = 0; SampleIndex < Region2Size; ++SampleIndex)
-				{
-					if (SquareWaveCounter) {
-						SquareWaveCounter = SquareWavePeriod;
-					}
-					int16 SampleValue = (SquareWaveCounter > (SquareWavePeriod / 2)) ? 16000 : -16000;
-					*SampleOut++ = SampleValue;
-					*SampleOut++ = SampleValue;
-					--SquareWaveCounter;
+
+				if (!SoundIsPlaying) {
+					GlobalSecondaryBuffer->Play(0, 0, DSBPLAY_LOOPING); // We don't care about reserved or priority
+					SoundIsPlaying = true;
 				}
 
 				// Blit to screen
 				win32_window_dimension Dimension = Win32GetWindowDimension(Window);
-				Win32DisplayBufferInWindow(&GlobalBackbuffer, DeviceContext, Dimension.Width, Dimension.Height,0, 0, Dimension.Width, Dimension.Height);
+				Win32DisplayBufferInWindow(&GlobalBackbuffer, DeviceContext, Dimension.Width, Dimension.Height, 0, 0, Dimension.Width, Dimension.Height);
 				//ReleaseDC(Window, DeviceContext);
 
 				// Increment offset
