@@ -33,7 +33,7 @@ struct win32_offscreen_buffer
 	int Pitch;
 };
 
-global_variable bool GlobalRunning;
+global_variable bool32 GlobalRunning;
 global_variable win32_offscreen_buffer GlobalBackbuffer;
 global_variable LPDIRECTSOUNDBUFFER GlobalSecondaryBuffer;
 
@@ -79,6 +79,9 @@ internal void Win32LoadXInput(void) {
 	// TODO(max): Test this on Windows 8 which only has 1.4
 	HMODULE XInputLibrary = LoadLibraryA("xinput1_4.dll");
 	if (!XInputLibrary) {
+		HMODULE XInputLibrary = LoadLibraryA("xinput9_1_0.dll");
+	}
+	if (!XInputLibrary) {
 		HMODULE XInputLibrary = LoadLibraryA("xinput1_3.dll"); // Looks in a number of places (exe folder first, then Windows)
 	}
 	if (XInputLibrary)
@@ -110,6 +113,8 @@ struct win32_sound_output
 	int WavePeriod;
 	int BytesPerSample;
 	int SecondaryBufferSize;
+	real32 tSine;
+	int LatencySampleCount;
 };
 
 internal void Win32InitDSound(HWND Window, int32 SamplesPerSecond, int32 BufferSize)
@@ -296,8 +301,8 @@ LRESULT CALLBACK Win32MainWindowCallback(HWND Window, UINT Message, WPARAM WPara
 		// LParam gives you even additional info (LParam & (1 << 30); for up before the message was sent or after)
 		#define KeyMessageWasDownBit (1 << 30)
 		#define KeyMessageIsDownBit (1 << 31)
-		bool WasDown = ((LParam & KeyMessageWasDownBit) != 0);
-		bool IsDown = ((LParam & KeyMessageIsDownBit) == 0);
+		bool32 WasDown = ((LParam & KeyMessageWasDownBit) != 0);
+		bool32 IsDown = ((LParam & KeyMessageIsDownBit) == 0);
 
 		if (WasDown != IsDown)
 		{
@@ -381,7 +386,7 @@ LRESULT CALLBACK Win32MainWindowCallback(HWND Window, UINT Message, WPARAM WPara
 		EndPaint(Window, &Paint); // For WM_PAINT
 	} break;
 	default:
-		Result = DefWindowProc(Window, Message, WParam, LParam); // Let Windows do the default behaviour
+		Result = DefWindowProcA(Window, Message, WParam, LParam); // Let Windows do the default behaviour
 		break;
 	}
 	return Result;
@@ -474,14 +479,14 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLi
 			SoundOutput.SamplesPerSecond = 48000;
 			SoundOutput.ToneHz = 256; // 261Hz is middle C
 			SoundOutput.ToneVolume = 2000;
-			SoundOutput.RunningSampleIndex = 0; // Where we are in our square wave pattern
 			SoundOutput.WavePeriod = SoundOutput.SamplesPerSecond / SoundOutput.ToneHz; // How many samples do we need to fill to get 256Hz
 			SoundOutput.BytesPerSample = sizeof(int16) * 2;
+			SoundOutput.LatencySampleCount = SoundOutput.SamplesPerSecond / 15; // For low latency. If playing at 15fps or higher, don't get any dropouts
 			SoundOutput.SecondaryBufferSize = SoundOutput.SamplesPerSecond * SoundOutput.BytesPerSample;
 
 			// Fill sound buffer at startup
 			Win32InitDSound(Window, SoundOutput.SamplesPerSecond, SoundOutput.SecondaryBufferSize);
-			Win32FillSoundBuffer(&SoundOutput, 0, SoundOutput.SecondaryBufferSize);
+			Win32FillSoundBuffer(&SoundOutput, 0, SoundOutput.LatencySampleCount * SoundOutput.BytesPerSample);
 			GlobalSecondaryBuffer->Play(0, 0, DSBPLAY_LOOPING); // We don't care about reserved or priority
 
 			// Pull messages off our queue
@@ -508,22 +513,22 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLi
 					{
 						// This controller is plugged in
 						XINPUT_GAMEPAD *Pad = &ControllerState.Gamepad;
-						bool Up = (Pad->wButtons & XINPUT_GAMEPAD_DPAD_UP);
-						bool Down = (Pad->wButtons & XINPUT_GAMEPAD_DPAD_DOWN);
-						bool Left = (Pad->wButtons & XINPUT_GAMEPAD_DPAD_LEFT);
-						bool Right = (Pad->wButtons & XINPUT_GAMEPAD_DPAD_RIGHT);
-						bool Start = (Pad->wButtons & XINPUT_GAMEPAD_START);
-						bool LeftShoulder = (Pad->wButtons & XINPUT_GAMEPAD_BACK);
-						bool RightShoulder = (Pad->wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER);
-						bool AButton = (Pad->wButtons & XINPUT_GAMEPAD_A);
-						bool BButton = (Pad->wButtons & XINPUT_GAMEPAD_B);
-						bool XButton = (Pad->wButtons & XINPUT_GAMEPAD_X);
-						bool YButton = (Pad->wButtons & XINPUT_GAMEPAD_Y);
+						bool32 Up = (Pad->wButtons & XINPUT_GAMEPAD_DPAD_UP);
+						bool32 Down = (Pad->wButtons & XINPUT_GAMEPAD_DPAD_DOWN);
+						bool32 Left = (Pad->wButtons & XINPUT_GAMEPAD_DPAD_LEFT);
+						bool32 Right = (Pad->wButtons & XINPUT_GAMEPAD_DPAD_RIGHT);
+						bool32 Start = (Pad->wButtons & XINPUT_GAMEPAD_START);
+						bool32 LeftShoulder = (Pad->wButtons & XINPUT_GAMEPAD_BACK);
+						bool32 RightShoulder = (Pad->wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER);
+						bool32 AButton = (Pad->wButtons & XINPUT_GAMEPAD_A);
+						bool32 BButton = (Pad->wButtons & XINPUT_GAMEPAD_B);
+						bool32 XButton = (Pad->wButtons & XINPUT_GAMEPAD_X);
+						bool32 YButton = (Pad->wButtons & XINPUT_GAMEPAD_Y);
 						int16 StickX = Pad->sThumbLX;
 						int16 StickY = Pad->sThumbLY;
 
-						XOffset += StickX >> 12;
-						YOffset += StickY >> 12;
+						XOffset += StickX / 4096;
+						YOffset += StickY / 4096;
 					}
 					else
 					{
@@ -546,23 +551,19 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLi
 					// Ignore the write cursor, because it may be garbage by the time we play it
 					// Calcualte the byte lock and byte write instead
 					DWORD ByteToLock = (SoundOutput.RunningSampleIndex * SoundOutput.BytesPerSample) % SoundOutput.SecondaryBufferSize; // % if it loops, return to the beginning
+					DWORD TargetCursor = (PlayCursor + (SoundOutput.LatencySampleCount * SoundOutput.BytesPerSample)) % SoundOutput.SecondaryBufferSize; // Be 1/15th ahead of play cursor tat all times
 					DWORD BytesToWrite;
-					// Will be 0 when we start up
-					if (ByteToLock == PlayCursor)
-					{
-						BytesToWrite = 0;
-					}
 					// If byte to lock was after the play cursor
-					else if (ByteToLock > PlayCursor)
+					if (ByteToLock > TargetCursor)
 					{
 						// Case for region 1 (wrapping)
 						BytesToWrite = (SoundOutput.SecondaryBufferSize - ByteToLock);
-						BytesToWrite += PlayCursor;
+						BytesToWrite += TargetCursor;
 					}
 					else
 					{
 						// Case for region 2 (no wrapping)
-						BytesToWrite = PlayCursor - ByteToLock;
+						BytesToWrite = TargetCursor - ByteToLock;
 					}
 					
 					// Fill sound buffer
