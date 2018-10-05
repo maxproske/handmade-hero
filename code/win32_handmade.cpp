@@ -3,6 +3,7 @@
 #include <xinput.h>
 #include <dsound.h>
 #include <math.h>
+#include <stdio.h>
 
 #define local_persist static // Can't be used outside this translation unit (source file)
 #define global_variable static 
@@ -444,6 +445,10 @@ internal void Win32FillSoundBuffer(win32_sound_output *SoundOutput, DWORD ByteTo
 // Entry point for Windows
 int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowCode)
 {
+	LARGE_INTEGER PerfCountFrequencyResult;
+	QueryPerformanceFrequency(&PerfCountFrequencyResult); // Fixed at system boot time, we only need to ask once
+	int64 PerfCountFrequency = PerfCountFrequencyResult.QuadPart;
+
 	// Load XInput from DLL manually
 	Win32LoadXInput();
 
@@ -489,8 +494,14 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLi
 			Win32FillSoundBuffer(&SoundOutput, 0, SoundOutput.LatencySampleCount * SoundOutput.BytesPerSample);
 			GlobalSecondaryBuffer->Play(0, 0, DSBPLAY_LOOPING); // We don't care about reserved or priority
 
-			// Pull messages off our queue
 			GlobalRunning = true;
+
+			LARGE_INTEGER LastCounter; // Uses a union (multiple structs overlay some same space in memory) .QuadPart to access as 64bit, .LowPart+.HighPart to access as 32-bit
+			QueryPerformanceCounter(&LastCounter);
+
+			int64 LastCycleCount = __rdtsc(); // Snap the RDTSC counter from the processor. An "intrinsic" for RDTSC
+
+			// Pull messages off our queue
 			while (GlobalRunning)
 			{
 				// GetMessage blocks graphics API, so use PeekMessage
@@ -573,10 +584,29 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLi
 				// Blit to screen
 				win32_window_dimension Dimension = Win32GetWindowDimension(Window);
 				Win32DisplayBufferInWindow(&GlobalBackbuffer, DeviceContext, Dimension.Width, Dimension.Height, 0, 0, Dimension.Width, Dimension.Height);
-				//ReleaseDC(Window, DeviceContext);
-
+				
 				// Increment offset
 				++XOffset;
+
+				int64 EndCycleCount = __rdtsc();
+
+				// Look at the clock
+				LARGE_INTEGER EndCounter;
+				QueryPerformanceCounter(&EndCounter); // https://youtu.be/tAcUIEoy2Yk?t=3513
+
+				int64 CyclesElapsed = EndCycleCount - LastCycleCount;
+				int64 CounterElapsed = EndCounter.QuadPart - LastCounter.QuadPart; // Compute difference
+				
+				real32 MSPerFrame = (((1000.0f*(real32)CounterElapsed) / (real32)PerfCountFrequency)); // How many wall clock seconds actually elapsed
+				real32 FPS = (real32)PerfCountFrequency / (real32)CounterElapsed;
+				real32 MCPF = (real32)(CyclesElapsed / (1000.0f * 1000.0f)); // Printing out a 64-bit integer is relatively new
+
+				char Buffer[256];
+				sprintf(Buffer, "%dms/f, %d FPS, %dM instructions/frame\n", MSPerFrame, FPS, MCPF);
+				OutputDebugStringA(Buffer);
+
+				LastCounter = EndCounter; // With QueryPerformanceCounter
+				LastCycleCount = EndCycleCount; // With RDTSC
 			}
 		}
 		else
