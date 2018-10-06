@@ -1,29 +1,17 @@
-#include <windows.h>
-#include <stdint.h>
-#include <xinput.h>
-#include <dsound.h>
-#include <math.h>
-#include <stdio.h>
+// WIN32 Platform Layer TODO
+// --------------------
+// * This is not a final win32 platform layer we would ship.
+// * Sound buffer up that we can play into
+// * Graphics buffer we can write directly into
+// * Rudementery input from a controller
+// * Timing (sleep/timeBeginPeriod to not melt processor)
+// * File I/O (saved game locations, asset path)
+// * Get a handle to our own exe
+// * Threading
 
-#define local_persist static // Can't be used outside this translation unit (source file)
-#define global_variable static 
-#define internal static
-
-#define Pi32 3.14159265359f
-
-typedef int8_t int8;
-typedef int16_t int16;
-typedef int32_t int32;
-typedef int64_t int64;
-typedef int32 bool32;
-
-typedef uint8_t uint8;
-typedef uint16_t uint16;
-typedef uint32_t uint32;
-typedef uint64_t uint64;
-
-typedef float real32;
-typedef double real64;
+// #include "handmade.cpp" is the "Unity" build (no, not the game engine)
+// Instead of chaining on the cli (cl ... win32_handmade.cpp handmade.cpp), everything in one translation unit
+#include "handmade.cpp"
 
 struct win32_offscreen_buffer
 {
@@ -204,25 +192,6 @@ internal void Win32InitDSound(HWND Window, int32 SamplesPerSecond, int32 BufferS
 
 
 	// Start playing
-}
-
-internal void RenderWeirdGradient(win32_offscreen_buffer *Buffer, int BlueOffset, int GreenOffset)
-{
-	// Cast void pointer to unsigned char (typedef uint8)
-	uint8 *Row = (uint8 *)Buffer->Memory;
-	for (int Y = 0; Y < Buffer->Height; ++Y)
-	{
-		uint32 *Pixel = (uint32 *)Row;
-		for (int X = 0; X < Buffer->Width; ++X)
-		{
-			// Little endian (255,0,0,0 will draw blue)
-			uint8 Blue = (X + BlueOffset);
-			uint8 Green = (Y + GreenOffset);
-
-			*Pixel++ = ((Green << 8) | Blue);
-		}
-		Row += Buffer->Pitch;
-	}
 }
 
 // Allocate back buffer
@@ -499,7 +468,7 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLi
 			LARGE_INTEGER LastCounter; // Uses a union (multiple structs overlay some same space in memory) .QuadPart to access as 64bit, .LowPart+.HighPart to access as 32-bit
 			QueryPerformanceCounter(&LastCounter);
 
-			int64 LastCycleCount = __rdtsc(); // Snap the RDTSC counter from the processor. An "intrinsic" for RDTSC
+			uint64 LastCycleCount = __rdtsc(); // Snap the RDTSC counter from the processor. An "intrinsic" for RDTSC
 
 			// Pull messages off our queue
 			while (GlobalRunning)
@@ -546,7 +515,14 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLi
 						// The controller is not available
 					}
 				}
-				RenderWeirdGradient(&GlobalBackbuffer, XOffset, YOffset);
+
+				//RenderWeirdGradient(&GlobalBackbuffer, XOffset, YOffset);
+				game_offscreen_buffer Buffer = {};
+				Buffer.Memory = GlobalBackbuffer.Memory;
+				Buffer.Width = GlobalBackbuffer.Width;
+				Buffer.Height = GlobalBackbuffer.Height;
+				Buffer.Pitch = GlobalBackbuffer.Pitch;
+				GameUpdateAndRender(&Buffer, XOffset, YOffset);
 
 				// DirectSound picks a point in the 2s buffer to write to
 				// Region 1 is the actual location of the write cursor offset, to where it should end in the next 2s buffer
@@ -588,23 +564,25 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLi
 				// Increment offset
 				++XOffset;
 
-				int64 EndCycleCount = __rdtsc();
+				uint64 EndCycleCount = __rdtsc();
 
 				// Look at the clock
 				LARGE_INTEGER EndCounter;
-				QueryPerformanceCounter(&EndCounter); // https://youtu.be/tAcUIEoy2Yk?t=3513
+				QueryPerformanceCounter(&EndCounter);
 
-				int64 CyclesElapsed = EndCycleCount - LastCycleCount;
+				uint64 CyclesElapsed = EndCycleCount - LastCycleCount;
 				int64 CounterElapsed = EndCounter.QuadPart - LastCounter.QuadPart; // Compute difference
 				
-				real32 MSPerFrame = (((1000.0f*(real32)CounterElapsed) / (real32)PerfCountFrequency)); // How many wall clock seconds actually elapsed
-				real32 FPS = (real32)PerfCountFrequency / (real32)CounterElapsed;
-				real32 MCPF = (real32)(CyclesElapsed / (1000.0f * 1000.0f)); // Printing out a 64-bit integer is relatively new
+				// real64s are free here, because sprintf_s upconverts real32s
+				real64 MSPerFrame = (((1000.0f*(real64)CounterElapsed) / (real64)PerfCountFrequency)); // How many wall clock seconds actually elapsed
+				real64 FPS = (real64)PerfCountFrequency / (real64)CounterElapsed;
+				real64 MCPF = (real64)(CyclesElapsed / (1000.0f * 1000.0f)); // Printing out a 64-bit integer is relatively new
 
+#if 0
 				char Buffer[256];
-				sprintf(Buffer, "%dms/f, %d FPS, %dM instructions/frame\n", MSPerFrame, FPS, MCPF);
+				sprintf_s(Buffer, "%.02fms/f, %.02f FPS, %.02fM instructions/frame\n", MSPerFrame, FPS, MCPF);
 				OutputDebugStringA(Buffer);
-
+#endif
 				LastCounter = EndCounter; // With QueryPerformanceCounter
 				LastCycleCount = EndCycleCount; // With RDTSC
 			}
