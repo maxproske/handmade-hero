@@ -11,6 +11,7 @@ pushd ..\build
 ::   `cl win32_handmade.cpp` builds .obj (intermediate file) and .exe
 ::   `-Zi` builds with .pdp debug files
 ::   `-FC` specifies full path name
+::   `-O2` does optimization
 cl -FC -Zi ..\code\win32_handmade.cpp user32.lib gdi32.lib
 
 :: Pop directory back to starting directory
