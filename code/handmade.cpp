@@ -1,4 +1,3 @@
-
 #include "handmade.h"
 
 internal void RenderWeirdGradient(game_offscreen_buffer *Buffer, int BlueOffset, int GreenOffset)

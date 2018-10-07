@@ -1,11 +1,6 @@
 #pragma once
 
-#include <windows.h>
 #include <stdint.h>
-#include <xinput.h>
-#include <dsound.h>
-#include <math.h>
-#include <stdio.h>
 
 #define local_persist static // Can't be used outside this translation unit (source file)
 #define global_variable static 

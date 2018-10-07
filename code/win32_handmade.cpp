@@ -8,10 +8,18 @@
 // * File I/O (saved game locations, asset path)
 // * Get a handle to our own exe
 // * Threading
+#include "handmade.h"
 
 // #include "handmade.cpp" is the "Unity" build (no, not the game engine)
 // Instead of chaining on the cli (cl ... win32_handmade.cpp handmade.cpp), everything in one translation unit
 #include "handmade.cpp"
+
+// Put as much above windows.h as possible, so #defines do not conflict
+#include <windows.h>
+#include <xinput.h>
+#include <dsound.h>
+#include <math.h>
+#include <stdio.h>
 
 struct win32_offscreen_buffer
 {
@@ -62,9 +70,14 @@ global_variable x_input_set_state *XInputSetState_ = XInputSetStateStub;
 #define DIRECT_SOUND_CREATE(name) HRESULT WINAPI name(LPCGUID pcGuidDevice, LPDIRECTSOUND *ppDS, LPUNKNOWN pUnkOuter)
 typedef DIRECT_SOUND_CREATE(direct_sound_create);
 
+// Implements Win32 file loading
+void* PlatformLoadFile(char *FileName)
+{
+	return 0;
+}
 
 // Take loading Windows DLL into our own hands
-internal void Win32LoadXInput(void) {
+internal void Win32LoadXInput() {
 	// TODO(max): Test this on Windows 8 which only has 1.4
 	HMODULE XInputLibrary = LoadLibraryA("xinput1_4.dll");
 	if (!XInputLibrary) {
@@ -596,5 +609,5 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLi
 	{
 		// TODO(max): Logging
 	}
-	return (0);
+	return 0;
 }
