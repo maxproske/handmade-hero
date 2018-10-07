@@ -1,5 +1,6 @@
 #pragma once
 
+#include <math.h>
 #include <stdint.h>
 
 #define local_persist static // Can't be used outside this translation unit (source file)
@@ -36,4 +37,14 @@ struct game_offscreen_buffer
 	int Pitch;
 };
 
-internal void GameUpdateAndRender(game_offscreen_buffer *Buffer, int BlueOffset, int GreenOffset);
+struct game_sound_output_buffer
+{
+	int SamplesPerSecond;
+	int SampleCount;
+	int16 *Samples;
+};
+
+internal void GameUpdateAndRender(
+	game_offscreen_buffer *Buffer, int BlueOffset, int GreenOffset,
+	game_sound_output_buffer *SoundBuffer
+);

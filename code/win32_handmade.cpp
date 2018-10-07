@@ -18,7 +18,6 @@
 #include <windows.h>
 #include <xinput.h>
 #include <dsound.h>
-#include <math.h>
 #include <stdio.h>
 
 struct win32_offscreen_buffer
@@ -375,7 +374,40 @@ LRESULT CALLBACK Win32MainWindowCallback(HWND Window, UINT Message, WPARAM WPara
 	return Result;
 }
 
-internal void Win32FillSoundBuffer(win32_sound_output *SoundOutput, DWORD ByteToLock, DWORD BytesToWrite)
+internal void Win32ClearBuffer(win32_sound_output *SoundOutput)
+{
+	VOID *Region1;
+	DWORD Region1Size; // Byte sizes
+	VOID *Region2;
+	DWORD Region2Size;
+	// Did the sound card get yanked
+	if (SUCCEEDED(GlobalSecondaryBuffer->Lock(
+		0,
+		SoundOutput->SecondaryBufferSize, // Clear absolutely everything in the win32 sound buffer
+		&Region1, &Region1Size,
+		&Region2, &Region2Size,
+		0))) {
+		
+		// Work in bytes now, not samples
+		uint8 *DestSample = (uint8 *)Region1;
+		for (DWORD ByteIndex = 0; ByteIndex < Region1Size; ++ByteIndex)
+		{
+			*DestSample++ = 0; // Clear manually instead of using memset (to call as few library functions as possible)
+		}
+
+		DestSample = (uint8 *)Region2;
+		for (DWORD ByteIndex = 0; ByteIndex < Region2Size; ++ByteIndex)
+		{
+			*DestSample++ = 0;
+		}
+
+		// https://youtu.be/5YhR2zAkQmo?t=2226
+
+		GlobalSecondaryBuffer->Unlock(Region1, Region1Size, Region2, Region2Size);
+	}
+}
+
+internal void Win32FillSoundBuffer(win32_sound_output *SoundOutput, DWORD ByteToLock, DWORD BytesToWrite, game_sound_output_buffer *SourceBuffer)
 {
 	VOID *Region1;
 	DWORD Region1Size; // Byte sizes
@@ -393,29 +425,24 @@ internal void Win32FillSoundBuffer(win32_sound_output *SoundOutput, DWORD ByteTo
 		// Assert that both region sizes are valid (even)
 
 		DWORD Region1SampleCount = Region1Size / SoundOutput->BytesPerSample;
-		int16 *SampleOut = (int16 *)Region1;
+		int16 *DestSample = (int16 *)Region1;
+		int16 *SourceSample = SourceBuffer->Samples; // Pull from the source buffer instead of sine wave
+
 		for (DWORD SampleIndex = 0; SampleIndex < Region1SampleCount; ++SampleIndex)
 		{
-			// Pass in an angle and radians, and get back a value between -1 and 1
-			real32 t = (2.0f * Pi32) * (real32)SoundOutput->RunningSampleIndex / (real32)SoundOutput->WavePeriod; // Period of sine is 2pi 
-			real32 SineValue = sinf(t);
-			int16 SampleValue = (int16)(SineValue * SoundOutput->ToneVolume);
-			*SampleOut++ = SampleValue;
-			*SampleOut++ = SampleValue;
-
+			// Copy from dest buffer to source buffer
+			*DestSample++ = *SourceSample++;
+			*DestSample++ = *SourceSample++;
 			++SoundOutput->RunningSampleIndex;
 		}
 
+		// TODO(max): Collapse these loops
 		DWORD Region2SampleCount = Region2Size / SoundOutput->BytesPerSample;
-		SampleOut = (int16 *)Region2;
+		DestSample = (int16 *)Region2;
 		for (DWORD SampleIndex = 0; SampleIndex < Region2SampleCount; ++SampleIndex)
 		{
-			real32 t = (2.0f * Pi32) * (real32)SoundOutput->RunningSampleIndex / (real32)SoundOutput->WavePeriod; // Period of sine is 2pi 
-			real32 SineValue = sinf(t);
-			int16 SampleValue = (int16)(SineValue * SoundOutput->ToneVolume);
-			*SampleOut++ = SampleValue;
-			*SampleOut++ = SampleValue;
-
+			*DestSample++ = *SourceSample++;
+			*DestSample++ = *SourceSample++;
 			++SoundOutput->RunningSampleIndex;
 		}
 
@@ -473,7 +500,8 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLi
 
 			// Fill sound buffer at startup
 			Win32InitDSound(Window, SoundOutput.SamplesPerSecond, SoundOutput.SecondaryBufferSize);
-			Win32FillSoundBuffer(&SoundOutput, 0, SoundOutput.LatencySampleCount * SoundOutput.BytesPerSample);
+			Win32ClearBuffer(&SoundOutput); // Flush it with zeros
+			//Win32FillSoundBuffer(&SoundOutput, 0, SoundOutput.LatencySampleCount * SoundOutput.BytesPerSample);
 			GlobalSecondaryBuffer->Play(0, 0, DSBPLAY_LOOPING); // We don't care about reserved or priority
 
 			GlobalRunning = true;
@@ -529,13 +557,20 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLi
 					}
 				}
 
+				int16 Samples[48000/30*2]; // Stereo 48k @30 FPS. Put samples right on the stack, we don't need to allocate memory
+				game_sound_output_buffer SoundBuffer = {};
+				SoundBuffer.SamplesPerSecond = SoundOutput.SamplesPerSecond;
+				SoundBuffer.SampleCount = SoundBuffer.SamplesPerSecond / 30; // Target 30 FPS
+				SoundBuffer.Samples = Samples;
+
+
 				//RenderWeirdGradient(&GlobalBackbuffer, XOffset, YOffset);
 				game_offscreen_buffer Buffer = {};
 				Buffer.Memory = GlobalBackbuffer.Memory;
 				Buffer.Width = GlobalBackbuffer.Width;
 				Buffer.Height = GlobalBackbuffer.Height;
 				Buffer.Pitch = GlobalBackbuffer.Pitch;
-				GameUpdateAndRender(&Buffer, XOffset, YOffset);
+				GameUpdateAndRender(&Buffer, XOffset, YOffset, &SoundBuffer);
 
 				// DirectSound picks a point in the 2s buffer to write to
 				// Region 1 is the actual location of the write cursor offset, to where it should end in the next 2s buffer
@@ -567,7 +602,7 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLi
 					}
 					
 					// Fill sound buffer
-					Win32FillSoundBuffer(&SoundOutput, ByteToLock, BytesToWrite);
+					Win32FillSoundBuffer(&SoundOutput, ByteToLock, BytesToWrite, &SoundBuffer);
 				}
 
 				// Blit to screen
