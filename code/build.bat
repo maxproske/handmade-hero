@@ -4,7 +4,7 @@
 cl >NUL 2>&1 || ( call ../misc/shell.bat )
 
 :: Push directory and build here
-mkdir ..\build 2> NUL
+IF NOT EXIST ..\build mkdir ..\build 2> NUL
 pushd ..\build
 
 :: Unresolved external symbol means we are missing a .lib (Lookup DLL in MSDN)

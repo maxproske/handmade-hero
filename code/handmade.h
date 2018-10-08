@@ -1,11 +1,7 @@
 #pragma once
 
-#include <windows.h>
-#include <stdint.h>
-#include <xinput.h>
-#include <dsound.h>
 #include <math.h>
-#include <stdio.h>
+#include <stdint.h>
 
 #define local_persist static // Can't be used outside this translation unit (source file)
 #define global_variable static 
@@ -41,4 +37,13 @@ struct game_offscreen_buffer
 	int Pitch;
 };
 
-internal void GameUpdateAndRender(game_offscreen_buffer *Buffer, int BlueOffset, int GreenOffset);
+struct game_sound_output_buffer
+{
+	int SamplesPerSecond;
+	int SampleCount;
+	int16 *Samples;
+};
+
+internal void GameUpdateAndRender(game_offscreen_buffer *Buffer, 
+									int BlueOffset, int GreenOffset,
+									game_sound_output_buffer *SoundBuffer);
