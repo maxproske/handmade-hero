@@ -16,7 +16,7 @@ internal void GameOutputSound(game_sound_output_buffer *SoundBuffer, int ToneHz)
 		*SampleOut++ = SampleValue;
 		*SampleOut++ = SampleValue;
 
-		tSine += 2.0f*Pi32*1.0f/(real32)WavePeriod; // Period of sine is 2pi 
+		tSine += 2.0f*Pi32*1.0f / (real32)WavePeriod; // Period of sine is 2pi 
 	}
 }
 
@@ -40,8 +40,32 @@ internal void RenderWeirdGradient(game_offscreen_buffer *Buffer, int BlueOffset,
 }
 
 // Platform-independent update loop
-internal void GameUpdateAndRender(game_offscreen_buffer *Buffer, int BlueOffset, int GreenOffset, game_sound_output_buffer *SoundBuffer, int ToneHz)
+internal void GameUpdateAndRender(game_offscreen_buffer *Buffer, game_sound_output_buffer *SoundBuffer)
 {
+	local_persist int BlueOffset = 0;
+	local_persist int GreenOffset = 0;
+	local_persist int ToneHz = 256;
+
+	game_controller_input *Input0 = &Input.PlayerControllers[0];
+	if(Input0->IsAnalog)
+	{
+		// TODO(max): Use analog movement tuning
+		ToneHz = 256 + (int)(128.0f*(Input0->EndX));
+		BlueOffset += (int)4.0f*(Input0->EndY);
+	}
+	else
+	{
+		// TODO(max): Use digital movement tuning
+	}
+
+	// These two values add up to what the button was at the start of the frame
+	//Input.AButtonEndedDown;
+	//Input.AButtonHalfTransitionCount;
+	if (Input0->AButtonEndedDown)
+	{
+		GreenOffset += 1;
+	}
+
 	GameOutputSound(SoundBuffer, ToneHz); // How many samples of sound to output
 	RenderWeirdGradient(Buffer, BlueOffset, GreenOffset);
 }
