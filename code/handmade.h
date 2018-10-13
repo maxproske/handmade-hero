@@ -23,6 +23,8 @@ typedef uint64_t uint64;
 typedef float real32;
 typedef double real64;
 
+#define ArrayCount(Array) (sizeof(Array) / sizeof((Array)[0])) // For swapping
+
 // TODO(max): Services that the platform layer provides to the game
 
 // NOTE(max): Services that the game provides to the playform layer
@@ -52,6 +54,15 @@ struct game_button_state
 
 struct game_controller_input
 {
+	bool32 IsAnalog;
+
+	real32 StartX;
+	real32 StartY;
+	real32 MinX;
+	real32 MinY;
+	real32 EndX;
+	real32 EndY;
+
 	union {
 		game_button_state Buttons[6];
 		struct {
@@ -70,4 +81,7 @@ struct game_input
 	game_controller_input Controllers[4];
 };
 
-internal void GameUpdateAndRender(game_offscreen_buffer *Buffer, game_sound_output_buffer *SoundBuffer);
+internal void 
+GameUpdateAndRender(game_input *Input, 
+					game_offscreen_buffer *Buffer, 
+					game_sound_output_buffer *SoundBuffer);

@@ -40,18 +40,21 @@ internal void RenderWeirdGradient(game_offscreen_buffer *Buffer, int BlueOffset,
 }
 
 // Platform-independent update loop
-internal void GameUpdateAndRender(game_offscreen_buffer *Buffer, game_sound_output_buffer *SoundBuffer)
+internal void 
+GameUpdateAndRender(game_input *Input, 
+					game_offscreen_buffer *Buffer, 
+					game_sound_output_buffer *SoundBuffer)
 {
 	local_persist int BlueOffset = 0;
 	local_persist int GreenOffset = 0;
 	local_persist int ToneHz = 256;
 
-	game_controller_input *Input0 = &Input.PlayerControllers[0];
+	game_controller_input *Input0 = &Input->Controllers[0];
 	if(Input0->IsAnalog)
 	{
 		// TODO(max): Use analog movement tuning
 		ToneHz = 256 + (int)(128.0f*(Input0->EndX));
-		BlueOffset += (int)4.0f*(Input0->EndY);
+		BlueOffset += (int)(4.0f*(Input0->EndY));
 	}
 	else
 	{
@@ -61,7 +64,7 @@ internal void GameUpdateAndRender(game_offscreen_buffer *Buffer, game_sound_outp
 	// These two values add up to what the button was at the start of the frame
 	//Input.AButtonEndedDown;
 	//Input.AButtonHalfTransitionCount;
-	if (Input0->AButtonEndedDown)
+	if (Input0->Down.EndedDown)
 	{
 		GreenOffset += 1;
 	}

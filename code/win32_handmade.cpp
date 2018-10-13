@@ -369,6 +369,16 @@ internal void Win32ClearBuffer(win32_sound_output *SoundOutput)
 	}
 }
 
+internal void
+Win32ProcessXInputDigitalButton(DWORD XInputButtonState, 
+								game_button_state *OldState, 
+								DWORD ButtonBit, 
+								game_button_state *NewState)
+{
+	NewState->EndedDown = ((XInputButtonState & ButtonBit) == ButtonBit);
+	NewState->HalfTransitionCount = (OldState->EndedDown != NewState->EndedDown) ? 1 : 0;
+}
+
 internal void Win32FillSoundBuffer(win32_sound_output *SoundOutput, DWORD ByteToLock, DWORD BytesToWrite, game_sound_output_buffer *SourceBuffer)
 {
 	VOID *Region1;
@@ -464,11 +474,16 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLi
 
 			GlobalRunning = true;
 
-			
 			// TODO(max): Pool with bitmap VirtualAlloc
 			// Allocate a backing store where we can copy sounds out to the ring buffer
 			int16 *Samples = (int16 *)VirtualAlloc(0, SoundOutput.SecondaryBufferSize, 
 													MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+
+			// Initialize game input
+			game_input Input[2] = {};
+			game_input *NewInput = &Input[0]; // So we can swap the pointers later
+			game_input *OldInput = &Input[1];
+
 
 			LARGE_INTEGER LastCounter; // Uses a union (multiple structs overlay some same space in memory) .QuadPart to access as 64bit, .LowPart+.HighPart to access as 32-bit
 			QueryPerformanceCounter(&LastCounter);
@@ -479,6 +494,7 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLi
 			{
 				// GetMessage blocks graphics API, so use PeekMessage
 				MSG Message;
+
 				while (PeekMessage(&Message, 0, 0, 0, PM_REMOVE))
 				{
 					// Quit anytime we get a quit message
@@ -489,9 +505,17 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLi
 					DispatchMessageA(&Message); // Dispatch message to Windows to have them
 				}
 
-				// TODO(max): Should we poll this more frequently?
-				for (DWORD ControllerIndex = 0; ControllerIndex < XUSER_MAX_COUNT; ++ControllerIndex)
+				DWORD MaxControllerCount = XUSER_MAX_COUNT; // https://youtu.be/Lt9DfMzZ9sI?t=3534
+				if (MaxControllerCount > ArrayCount(NewInput->Controllers))
 				{
+					MaxControllerCount = ArrayCount(NewInput->Controllers);
+				}
+				// TODO(max): Should we poll this more frequently?
+				for (DWORD ControllerIndex = 0; ControllerIndex < MaxControllerCount; ++ControllerIndex)
+				{
+					game_controller_input *OldController = &OldInput->Controllers[ControllerIndex];
+					game_controller_input *NewController = &NewInput->Controllers[ControllerIndex];
+
 					XINPUT_STATE ControllerState;
 					if (XInputGetState(ControllerIndex, &ControllerState) == ERROR_SUCCESS)
 					{
@@ -501,15 +525,32 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLi
 						bool32 Down = (Pad->wButtons & XINPUT_GAMEPAD_DPAD_DOWN);
 						bool32 Left = (Pad->wButtons & XINPUT_GAMEPAD_DPAD_LEFT);
 						bool32 Right = (Pad->wButtons & XINPUT_GAMEPAD_DPAD_RIGHT);
-						bool32 Start = (Pad->wButtons & XINPUT_GAMEPAD_START);
-						bool32 LeftShoulder = (Pad->wButtons & XINPUT_GAMEPAD_BACK);
-						bool32 RightShoulder = (Pad->wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER);
-						bool32 AButton = (Pad->wButtons & XINPUT_GAMEPAD_A);
-						bool32 BButton = (Pad->wButtons & XINPUT_GAMEPAD_B);
-						bool32 XButton = (Pad->wButtons & XINPUT_GAMEPAD_X);
-						bool32 YButton = (Pad->wButtons & XINPUT_GAMEPAD_Y);
 						int16 StickX = Pad->sThumbLX;
 						int16 StickY = Pad->sThumbLY;
+
+						Win32ProcessXInputDigitalButton(Pad->wButtons, 
+							&OldController->Down, XINPUT_GAMEPAD_A, 
+							&NewController->Down);
+						Win32ProcessXInputDigitalButton(Pad->wButtons, 
+							&OldController->Right, XINPUT_GAMEPAD_B, 
+							&NewController->Right);
+						Win32ProcessXInputDigitalButton(Pad->wButtons, 
+							&OldController->Left, XINPUT_GAMEPAD_X, 
+							&NewController->Left);
+						Win32ProcessXInputDigitalButton(Pad->wButtons, 
+							&OldController->Up, XINPUT_GAMEPAD_Y, 
+							&NewController->Up);
+						Win32ProcessXInputDigitalButton(Pad->wButtons,
+							&OldController->LeftShoulder, XINPUT_GAMEPAD_LEFT_SHOULDER,
+							&NewController->LeftShoulder);
+						Win32ProcessXInputDigitalButton(Pad->wButtons,
+							&OldController->RightShoulder, XINPUT_GAMEPAD_RIGHT_SHOULDER,
+							&NewController->RightShoulder);
+
+						// bool32 Start = (Pad->wButtons & XINPUT_GAMEPAD_START);
+						// bool32 Back = (Pad->wButtons & XINPUT_GAMEPAD_BACK);
+						// bool32 LeftShoulder = (Pad->wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER);
+						// bool32 RightShoulder = (Pad->wButtons & XINPUT_GAMEPAD_RIGHT_SHOULDER);
 					}
 					else
 					{
@@ -558,7 +599,7 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLi
 				Buffer.Width = GlobalBackbuffer.Width;
 				Buffer.Height = GlobalBackbuffer.Height;
 				Buffer.Pitch = GlobalBackbuffer.Pitch;
-				GameUpdateAndRender(&Buffer, &SoundBuffer);
+				GameUpdateAndRender(NewInput, &Buffer, &SoundBuffer);
 
 				// DirectSound picks a point in the 2s buffer to write to
 				// Region 1 is the actual location of the write cursor offset, to where it should end in the next 2s buffer
@@ -599,6 +640,11 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLi
 #endif
 				LastCounter = EndCounter; // With QueryPerformanceCounter
 				LastCycleCount = EndCycleCount; // With RDTSC
+
+				// Ping-pong between buffers, always have access to the last buffer we used for input
+				game_input *Temp = NewInput;
+				NewInput = OldInput;
+				OldInput = Temp;
 			}
 		}
 		else

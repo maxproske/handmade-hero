@@ -22,5 +22,5 @@ struct win32_sound_output
 	int BytesPerSample;
 	int SecondaryBufferSize;
 	real32 tSine;
-	int LatencySampleCount; // https://youtu.be/Lt9DfMzZ9sI?t=2374
+	int LatencySampleCount;
 };
